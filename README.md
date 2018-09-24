@@ -15,32 +15,12 @@ In this lab, you will learn how to install and configure Istio, an open source f
 5. [Verifying the installation](#verifying-the-installation)
 6. [Deploying an application](#deploying-an-application)
 7. [Use the application](#use-the-application)
-8. [Dynamically change request routing](#dynamically-change-request-routing)
-9. Monitoring and Observability
+8. Monitoring and Observability
    - [View metrics and tracing](#viewing-metrics-and-tracing)
    - [Monitoring for Istio](#monitoring-for-istio)
-   - [Generating a Service Graph](#generate-graph)
-10. [Fault Injection](#fault-injection)
-11. [Circuit Breaker](#circuit)
+9. [Circuit Breaker](#circuit)
 12. [Security](#security)
     - [Testing Istio mutual TLS authentication](#mutual)
-    - [Testing Istio RBAC](#rbac)
-    - [Testing Istio JWT Policy](#jwt)
-13. [Mesh Expansion](./mesh)
-14. [Multi-Cluster Mesh Expansion](./multi)
-15. [Miscellaneous](./misc)
-    - Websockets
-    - Rate Limiting
-    - Expose external services (egress traffic)
-15. [API Management](./apimanagement)
-    - Installing API Management
-    - Publish the API as a product
-    - Consume an API Product
-    - Obtain an OAuth token
-    - View API Analytics
-    - Expose APIs to third parties
-    - Restrict access to IPs
-16. [Uninstall Istio](#uninstall-istio)
 
 ## Introduction <a name="introduction"/>
 
@@ -116,13 +96,13 @@ To create a new cluster that meets these requirements, including alpha features,
     --machine-type=n1-standard-2 \
     --num-nodes=6 \
     --no-enable-legacy-authorization \
-    --zone=us-west1-b \
-    --cluster-version=1.9.7-gke.3
+    --zone=us-central1-b \
+    --cluster-version=1.10.7-gke.1
 ```
 
 Setup Kubernetes CLI Content:
 
-```gcloud container clusters get-credentials hello-istio --zone us-west1-b --project PROJECT_ID```
+```gcloud container clusters get-credentials hello-istio --zone us-central1-b --project PROJECT_ID```
 
 Now, grant cluster admin permissions to the current user. You need these permissions to create the necessary RBAC rules for Istio.
 
@@ -171,7 +151,7 @@ Let&#39;s now install Istio&#39;s core components. We will install the Istio Aut
 ```helm init --service-account tiller```
 
 4. Render Istio’s core components to a Kubernetes manifest called istio.yaml
-```helm template install/kubernetes/helm/istio --name istio --namespace istio-system > $HOME/istio.yaml```
+```helm template install/kubernetes/helm/istio --name istio --set tracing.enabled=true  --set grafana.enabled=true --set kiali.enabled=true --namespace istio-system > $HOME/istio.yaml```
 NOTE: See here for details on how to install the [helm client](https://docs.helm.sh/using_helm/).
 
 4. Install the components
@@ -237,29 +217,10 @@ When all the pods are running, you can proceed.
 
 ## Deploying an application <a name="deploying-an-application"/>
 
-Now Istio is installed and verified, you can deploy one of the sample applications provided with the installation — [BookInfo](https://istio.io/docs/guides/bookinfo.html). This is a simple mock bookstore application made up of four services that provide a web product page, book details, reviews (with several versions of the review service), and ratings - all managed using Istio.
 
-You will find the source code and all the other files used in this example in your Istio [samples/bookinfo](https://github.com/istio/istio/tree/master/samples/bookinfo) directory. These steps will deploy the BookInfo application&#39;s services in an Istio-enabled environment, with Envoy sidecar proxies injected alongside each service to provide Istio functionality.
 
 ### Overview
-In this guide we will deploy a simple application that displays information about a book, similar to a single catalog entry of an online book store. Displayed on the page is a description of the book, book details (ISBN, number of pages, and so on), and a few book reviews.
 
-The BookInfo application is broken into four separate microservices:
-
-* productpage. The productpage microservice calls the details and reviews microservices to populate the page.
-* details. The details microservice contains book information.
-* reviews. The reviews microservice contains book reviews. It also calls the ratings microservice.
-* ratings. The ratings microservice contains book ranking information that accompanies a book review.
-
-There are 3 versions of the reviews microservice:
-
-* Version v1 doesn’t call the ratings service.
-* Version v2 calls the ratings service, and displays each rating as 1 to 5 black stars.
-* Version v3 calls the ratings service, and displays each rating as 1 to 5 red stars.
-
-The end-to-end architecture of the application is shown below.
-
-![bookinfo](media/bookinfo.png)
 
 ### Deploy Bookinfo
 
@@ -388,99 +349,6 @@ Then point your browser to _**http://$GATEWAY\_URL/productpage**_ to view the Bo
 
 ![Istio](media/use-app-1.png)
 
-## Dynamically change request routing <a name="dynamically-change-request-routing"/>
-
-The BookInfo sample deploys three versions of the reviews microservice. When you accessed the application several times, you will have noticed that the output sometimes contains star ratings and sometimes it does not. This is because without an explicit default version set, Istio will route requests to all available versions of a service in a random fashion.
-
-We use the istioctl command line tool to control routing, adding a route rule that says all traffic should go to the v1 service. First, confirm there are no route rules installed :
-
-```istioctl get destinationrules -n default```
-
-No Resouces will be found. Now, create the rule (check out the source yaml file it you&#39;d like to understand how rules are specified) :
-
-Run the command:
-```
-kubectl apply -f samples/bookinfo/networking/destination-rule-all-mtls.yaml -n default
-```
-OUTPUT:
-```
-virtualservice "productpage" created
-virtualservice "reviews" created
-virtualservice "ratings" created
-virtualservice "details" created
-destinationrule "productpage" created
-destinationrule "reviews" created
-destinationrule "ratings" created
-destinationrule "details" created
-```
-
-Look at the rule you&#39;ve just created:
-
-```
-istioctl get destinationrules
-```
-OUTPUT:
-```
-DESTINATION-RULE NAME   HOST          SUBSETS                      NAMESPACE   AGE
-details                 details       v1,v2                        default     13s
-productpage             productpage   v1                           default     13s
-ratings                 ratings       v1,v2,v2-mysql,v2-mysql-vm   default     13s
-reviews                 reviews       v1,v2,v3                     default     13s
-```
-
-Go back to the Bookinfo application (http://$GATEWAY\_URL/productpage) in your browser. You should see the BookInfo application productpage displayed. Notice that the productpage is displayed with no rating stars since reviews:v1 does not access the ratings service.
-
-To test reviews:v2, but only for a certain user, let&#39;s create this rule:
-
-```
-kubectl apply -f samples/bookinfo/networking/virtual-service-reviews-test-v2.yaml -n default
-```
-
-Check out the route-rule-reviews-test-v2.yaml file to see how this virtual service is specified :
-
-```
-$ cat samples/bookinfo/networking/virtual-service-reviews-test-v2.yaml
-```
-OUTPUT:
-```
-apiVersion: networking.istio.io/v1alpha3
-kind: VirtualService
-metadata:
-  name: reviews
-spec:
-  hosts:
-    - reviews
-  http:
-  - match:
-    - headers:
-        cookie:
-          regex: "^(.*?;)?(user=jason)(;.*)?$"
-    route:
-    - destination:
-        host: reviews
-        subset: v2
-  - route:
-    - destination:
-        host: reviews
-        subset: v1
-```
-
-Look at the virtual service you&#39;ve just created :
-
-```istioctl get virtualservices reviews -o yaml```
-
-We now have a way to route some requests to use the reviews:v2 service. Can you guess how? (Hint: no passwords are needed) See how the page behaviour changes if you are logged in as no-one and &#39;jason&#39;.
-
-You can read the [documentation page](https://istio.io/docs/tasks/traffic-management/request-routing.html) for further details on Istio&#39;s request routing.
-
-Once the v2 version has been tested to our satisfaction, we could use Istio to send traffic from all users to v2, optionally in a gradual fashion.
-
-For now, let&#39;s clean up the routing rules:
-
-```
-kubectl delete -f samples/bookinfo/networking/virtual-service-all-v1.yaml -n default
-kubectl delete -f samples/bookinfo/networking/destination-rule-all-mtls.yaml -n default
-```
 
 ## View metrics and tracing <a name="viewing-metrics-and-tracing"/>
 
